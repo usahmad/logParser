@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const directory = "./timesheetLogs"
+var directory, _ = os.LookupEnv("LOG_DIRECTORY")
 
 func timeTrack(start time.Time, name string) {
 	elapsed := time.Since(start)
@@ -21,8 +21,29 @@ func timeTrack(start time.Time, name string) {
 	time.Sleep(time.Second * 3)
 }
 
+func checkEnv() {
+	envs := []string{
+		"DB_USERNAME",
+		"DB_SCHEMA",
+		"DB_PASSWORD",
+		"DB_HOST",
+		"DB_PORT",
+		"LOG_DIRECTORY",
+		"INCOMING_CALLS",
+		"FINISHING_CALLS",
+	}
+	for _, env := range envs {
+		_, exists := os.LookupEnv(env)
+		if !exists {
+			fmt.Println(fmt.Sprintf("%v does not exist in .env", env))
+			os.Exit(1)
+		}
+	}
+}
+
 func main() {
 	fmt.Println("TimeSheet parser by Us.@hmad started blэт")
+	checkEnv()
 	defer timeTrack(time.Now(), "Execution")
 	fmt.Println("Connecting to db")
 	db := db2.InitDb()
@@ -129,40 +150,40 @@ func parseFile(file string) []models.TimeSheetLog {
 	scanner := bufio.NewScanner(readFile)
 
 	var data []models.TimeSheetLog
-
+	incoming, _ := os.LookupEnv("INCOMING_CALLS")
+	incomingCallsTexts := strings.Split(incoming, ",")
+	outgoing, _ := os.LookupEnv("FINISHING_CALLS")
+	outgoingCallsTexts := strings.Split(outgoing, ",")
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, "specific") || strings.Contains(line, "Registered SIP") {
-			re := regexp.MustCompile(`\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\].*Registered\s+SIP\s+'(\d{3})'`)
-			match := re.FindStringSubmatch(line)
-			if match != nil {
-				i, err := strconv.Atoi(match[2])
-				if err != nil {
-					panic(err)
-				}
-				item := models.TimeSheetLog{
-					SIP:  i,
-					Date: match[1],
-					Type: "in",
-				}
-				data = append(data, item)
+		var match []string
+		var messageType string
+		for _, textIn := range incomingCallsTexts {
+			if strings.Contains(line, textIn) {
+				re := regexp.MustCompile(fmt.Sprintf(`\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\].*%v\s+SIP\s+'(\d{3})'`, textIn))
+				match = re.FindStringSubmatch(line)
+				messageType = "in"
 			}
 		}
-		if strings.Contains(line, "specific") || strings.Contains(line, "Unregistered") {
-			re := regexp.MustCompile(`\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\].*Unregistered\s+SIP\s+'(\d{3})'`)
-			match := re.FindStringSubmatch(line)
-			if match != nil {
-				i, err := strconv.Atoi(match[2])
-				if err != nil {
-					panic(err)
-				}
-				item := models.TimeSheetLog{
-					SIP:  i,
-					Date: match[1],
-					Type: "out",
-				}
-				data = append(data, item)
+
+		for _, textOut := range outgoingCallsTexts {
+			if strings.Contains(line, textOut) {
+				re := regexp.MustCompile(fmt.Sprintf(`\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\].*%v\s+SIP\s+'(\d{3})'`, textOut))
+				match = re.FindStringSubmatch(line)
+				messageType = "out"
 			}
+		}
+		if match != nil {
+			i, err := strconv.Atoi(match[2])
+			if err != nil {
+				panic(err)
+			}
+			item := models.TimeSheetLog{
+				SIP:  i,
+				Date: match[1],
+				Type: messageType,
+			}
+			data = append(data, item)
 		}
 	}
 	if err := scanner.Err(); err != nil {
